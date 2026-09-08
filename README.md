@@ -163,12 +163,33 @@ bash runtime/generate.command "my_voice" "$(cat script.txt)"
   --out outputs/output.wav
 ```
 
+## Anchor mode (the voice the desktop app makes)
+
+`runtime/generate.command` and `runtime/generate-anchor.ps1` default to **anchor mode**, which is exactly what the Windows desktop app this kit came from does internally:
+
+1. One fixed sentence (from `config/anchor.<lang>.txt`; `ko` and `en` are included) is synthesized from your raw reference clip and cached as `cache/anchors/anchor_<voice>_seed<seed>.wav` (about 5 seconds, done once per voice and seed).
+2. Every chunk of your script is generated with that anchor as `--voice-ref`, using temperature 0.66, top-k 24, top-p 0.8, seed 42, max-tokens 4096 and 200-character chunks.
+
+The anchor keeps the speaker identical across chunks and across seeds. Cloning straight from the raw clip with temperature 1.0 gives a noticeably different voice, so if a clip "sounds wrong" compared with the app, check that anchor mode is on.
+
+If a chunk stops before the end of the text (`max_tokens before EOC`), the scripts retry with seed offsets 1000 and 7777. With the anchor attached the speaker does not drift between those seeds.
+
+Overrides (macOS): `HIGGS_MODE=raw`, `HIGGS_BACKEND=metal`, `HIGGS_SEED`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_K`, `HIGGS_TOP_P`, `HIGGS_MAX_TOKENS`, `HIGGS_CHUNK`, `HIGGS_THREADS`.
+
+Windows (CUDA):
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
+```
+
+Measured on an RTX 4060 Ti (8 GB): a 31-second Korean narration in 33 seconds. Apple Silicon CPU takes several minutes for the same text.
+
 ## Tuning Parameters
 
 When calling `audiocpp_cli`, you can adjust:
 
 - `--seed` (int): Reproducibility seed. Same seed + same input = same output.
-- `--temperature` (0.0–2.0, default 1.0): Lower = more consistent; higher = more variation.
+- `--temperature` (0.0–2.0, CLI default 1.0; the kit scripts use 0.66): Lower = more consistent; higher = more variation.
 - `--text-chunk-size` (int, default 200): Split long text into chunks. Smaller chunks fit in VRAM but may reduce speaker consistency.
 - `--max-tokens` (int, default 4096): Maximum tokens per synthesis. Does not reduce model memory load.
 
@@ -214,6 +235,8 @@ See [docs/HIGGS_WINDOWS_INSTALL.md](docs/HIGGS_WINDOWS_INSTALL.md) for a full Wi
 - Fallback to CPU backend in `config/server.json`
 
 ### Voice doesn't sound like the reference
+
+- Make sure anchor mode is on (the default). Raw-reference cloning at temperature 1.0 sounds different from the desktop app.
 - Verify reference audio is at exactly 24 kHz mono, PCM 16-bit
 - Confirm the reference text matches word-for-word (including punctuation)
 - Try a different seed value

@@ -5,7 +5,8 @@
       "path": "voices/example_voice.wav",
       "use": "Example voice entry - replace with your own",
       "comment": "reference_text MUST match the exact words spoken in the WAV file, word-for-word including punctuation",
-      "reference_text": "This is the exact transcript of what is spoken in the reference audio file."
+      "reference_text": "This is the exact transcript of what is spoken in the reference audio file.",
+      "language": "ko"
     }
   ]
 }

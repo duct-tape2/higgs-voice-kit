@@ -1,0 +1,1 @@
+Hello. This is a real synthesized sample made with the currently selected voice and speed.

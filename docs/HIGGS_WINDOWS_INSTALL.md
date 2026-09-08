@@ -254,3 +254,13 @@ Output files are saved to `outputs/`.
 - All voice cloning is done locally; no data is sent to the cloud
 - Reference voices must have correct permissions (personal recording, licensed, or public domain)
 - Generated audio is saved locally in `outputs/`
+
+## Generating with the anchor pipeline
+
+After the model and `runtime\audiocpp_cli.exe` are in place:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
+```
+
+The first run builds a 5-second voice anchor and caches it under `cache\anchors\`; later runs reuse it. Output goes to `outputs\higgs-<timestamp>.wav` (24 kHz mono). See "Anchor mode" in README.md for the parameters.
