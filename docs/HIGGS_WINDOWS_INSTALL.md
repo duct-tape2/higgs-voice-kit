@@ -181,7 +181,9 @@ If the model is listed, the server is working. Stop it before starting the main 
 
 ### 6.1 Start the Server
 
-Double-click `windows\start-server.bat` (or `windows\start-server-gpu.bat` if available).
+Double-click `windows\start-server.bat` to start the server.
+
+Configure `config\server.json` to set `"backend": "cuda"` for GPU acceleration or `"cpu"` for CPU mode.
 
 The server listens at `http://127.0.0.1:8188`.
 

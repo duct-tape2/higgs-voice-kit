@@ -20,15 +20,16 @@ This kit lets you:
 
 ### macOS (Apple Silicon)
 - Xcode Command Line Tools or compatible zsh shell
+- Python 3 (for config file parsing; or `jq` if you prefer)
 - [audio.cpp](https://github.com/0xShug0/audio.cpp/releases) binary (`audiocpp_server` and `audiocpp_cli`)
 - Model: `bosonai/higgs-audio-v3-tts-4b` GGUF q8_0 from Hugging Face
-- `ffmpeg` (for audio resampling)
+- `ffmpeg` and `ffprobe` (for audio resampling and quality validation)
 
 ### Windows
 - PowerShell 5+ or Command Prompt
 - [audio.cpp Windows build](https://github.com/0xShug0/audio.cpp/releases) (CUDA or CPU binary)
 - Model: `bosonai/higgs-audio-v3-tts-4b` GGUF q8_0 from Hugging Face
-- `ffmpeg` (for audio resampling)
+- `ffmpeg` and `ffprobe` (for audio resampling and quality validation)
 - Optional: NVIDIA GPU + drivers for faster synthesis
 
 ## Quick Start
