@@ -84,13 +84,25 @@ run_tts() {
     --out "$6" > "$7" 2>&1
 }
 
+wav_seconds() {
+  ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1
+}
+
 generate_with_ladder() {
-  # $1 text  $2 voice_ref  $3 reference_text  $4 out  $5 log_base
-  local off seed log
+  # $1 text  $2 voice_ref  $3 reference_text  $4 out  $5 log_base  [$6 max_tokens] [$7 max_seconds]
+  local off seed log max_tokens="${6:-$MAX_TOKENS}" max_seconds="${7:-0}" secs
   for off in "${LADDER[@]}"; do
     seed=$((SEED + off))
     log="$5-seed$seed.log"
-    if run_tts "$1" "$2" "$3" "$seed" "$MAX_TOKENS" "$4" "$log"; then
+    if run_tts "$1" "$2" "$3" "$seed" "$max_tokens" "$4" "$log"; then
+      if [[ "$max_seconds" -gt 0 ]]; then
+        secs=$(wav_seconds "$4")
+        if [[ -z "$secs" || "$secs" -lt 2 || "$secs" -gt "$max_seconds" ]]; then
+          echo "seed $seed produced ${secs:-?}s for a ~5s sentence (babble), trying another seed" >&2
+          rm -f "$4"
+          continue
+        fi
+      fi
       echo "generated with seed $seed"
       return 0
     fi
@@ -112,7 +124,8 @@ if [[ "$MODE" == "anchor" ]]; then
   if [[ ! -f "$ANCHOR" ]]; then
     echo "building voice anchor for '$VOICE_ID' (one time)"
     ANCHOR_RAW="$ANCHOR.raw.wav"
-    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP"
+    # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 3-8 s.
+    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP" 1024 15
     ffmpeg -y -hide_banner -loglevel error -i "$ANCHOR_RAW" -ac 1 -ar 24000 -c:a pcm_s16le "$ANCHOR"
     rm -f "$ANCHOR_RAW"
   fi

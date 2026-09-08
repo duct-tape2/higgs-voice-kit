@@ -24,19 +24,17 @@ If this fails, install the latest NVIDIA drivers from https://www.nvidia.com/Dow
 
 ### 2.2 Download audio.cpp Runtime
 
-Download the prebuilt binaries from:
-https://github.com/kigner/audio.cpp-webui/releases/tag/v0.4.2-windows-prebuilt
+Download the prebuilt Windows binaries from the audio.cpp releases page:
+https://github.com/0xShug0/audio.cpp/releases
 
-You need:
-- `audiocpp-core-cuda-win-x64-v0.4.2.zip` (GPU version, optional)
-- `audiocpp-core-cpu-win-x64-v0.4.2.zip` (required)
+For an NVIDIA GPU take both zips of the same CUDA line (for example `audio-<version>-bin-windows-x64-cuda12.4.zip` and `audio-<version>-cudart-windows-x64-cuda12.4.zip`). For CPU only take `audio-<version>-bin-windows-x64-cpu.zip`.
 
-Extract both to: `%USERPROFILE%\Documents\Codex\HiggsAudioV3RuntimeData\`
+Extract everything into the kit's `runtime\` folder so that `audiocpp_cli.exe` and its DLLs sit side by side. The CLI refuses to start (exit code -1073741515, missing DLL) if the DLLs are anywhere else.
 
 Verify:
 ```powershell
-Test-Path "$env:USERPROFILE\Documents\Codex\HiggsAudioV3RuntimeData\gpu\audiocpp_server.exe"
-Test-Path "$env:USERPROFILE\Documents\Codex\HiggsAudioV3RuntimeData\cpu\audiocpp_server.exe"
+Test-Path "runtime\audiocpp_cli.exe"
+(Get-ChildItem runtime\*.dll).Count -gt 0
 ```
 
 ### 2.3 Download the Model
@@ -46,12 +44,12 @@ The model is ~5.1 GB. Download from:
 https://huggingface.co/audio-cpp/audio.cpp-gguf/resolve/main/Higgs-Audio-v3-TTS-4B-GGUF/higgs-audio-v3-tts-4b-q8_0.gguf
 ```
 
-Place in: `%USERPROFILE%\Documents\Codex\HiggsAudioV3RuntimeData\models\Higgs-Audio-v3-TTS-4B-GGUF\`
+Place in the kit as `models\higgs-audio-v3-tts-4b-q8_0.gguf`
 
 Verify checksum (should be `79746822045B5BF8F9AB2BDA87B16CD3F8EA3D9E319CBCF887A87AA1B537A74A`):
 
 ```powershell
-$Model = "$env:USERPROFILE\Documents\Codex\HiggsAudioV3RuntimeData\models\Higgs-Audio-v3-TTS-4B-GGUF\higgs-audio-v3-tts-4b-q8_0.gguf"
+$Model = "models\higgs-audio-v3-tts-4b-q8_0.gguf"
 (Get-FileHash -Algorithm SHA256 -LiteralPath $Model).Hash
 ```
 
@@ -143,8 +141,8 @@ Edit `config\voices.json`:
 Before using the kit, verify the server with a manual test:
 
 ```powershell
-$Runtime = "$env:USERPROFILE\Documents\Codex\HiggsAudioV3RuntimeData"
-$Server  = "$Runtime\gpu\audiocpp_server.exe"
+$Runtime = (Get-Location).Path   # the kit folder
+$Server  = "$Runtime\runtime\audiocpp_server.exe"
 $Config  = "$Runtime\server_higgs_manual.json"
 
 # Create test config (change <USER> to your Windows username)
@@ -160,7 +158,7 @@ $Config  = "$Runtime\server_higgs_manual.json"
     {
       "id": "higgs-audio-tts",
       "family": "higgs_audio_tts",
-      "path": "C:\\Users\\<USER>\\Documents\\Codex\\HiggsAudioV3RuntimeData\\models\\Higgs-Audio-v3-TTS-4B-GGUF\\higgs-audio-v3-tts-4b-q8_0.gguf",
+      "path": "models/higgs-audio-v3-tts-4b-q8_0.gguf",
       "task": "tts",
       "mode": "offline",
       "lazy": true
@@ -245,7 +243,7 @@ Output files are saved to `outputs/`.
 ## 8. Reference Documentation
 
 - **Higgs Audio v3 Model**: https://huggingface.co/bosonai/higgs-audio-v3-tts-4b
-- **audio.cpp GitHub**: https://github.com/kigner/audio.cpp-webui
+- **audio.cpp GitHub**: https://github.com/0xShug0/audio.cpp/releases
 - **API Documentation**: Check audio.cpp releases for OpenAI-compatible endpoint docs
 
 ## 9. Notes

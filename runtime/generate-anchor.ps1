@@ -55,12 +55,28 @@ function Invoke-Tts([string]$Text, [string]$Ref, [string]$RefText, [int]$UseSeed
     return $p.ExitCode
 }
 
-function Invoke-Ladder([string]$Text, [string]$Ref, [string]$RefText, [string]$Out, [string]$LogBase) {
+function Get-WavSeconds([string]$Path) {
+    # 24 kHz mono 16-bit PCM: 48000 bytes per second (44-byte header ignored).
+    return [math]::Round(((Get-Item $Path).Length - 44) / 48000.0, 1)
+}
+
+function Invoke-Ladder([string]$Text, [string]$Ref, [string]$RefText, [string]$Out, [string]$LogBase, [int]$UseMaxTokens = 0, [int]$MaxSeconds = 0) {
+    if ($UseMaxTokens -le 0) { $UseMaxTokens = $MaxTokens }
     foreach ($off in $Ladder) {
         $s = $Seed + $off
         $log = "$LogBase-seed$s.log"
-        $code = Invoke-Tts $Text $Ref $RefText $s $MaxTokens $Out $log
-        if ($code -eq 0 -and (Test-Path $Out)) { Write-Host "generated with seed $s"; return }
+        $code = Invoke-Tts $Text $Ref $RefText $s $UseMaxTokens $Out $log
+        if ($code -eq 0 -and (Test-Path $Out)) {
+            if ($MaxSeconds -gt 0) {
+                $secs = Get-WavSeconds $Out
+                if ($secs -lt 2 -or $secs -gt $MaxSeconds) {
+                    Write-Warning "seed $s produced ${secs}s for a ~5s sentence (babble), trying another seed"
+                    Remove-Item $Out -Force
+                    continue
+                }
+            }
+            Write-Host "generated with seed $s"; return
+        }
         $all = (Get-Content $log, "$log.err" -Raw -ErrorAction SilentlyContinue) -join "`n"
         if ($all -match 'max_tokens before EOC') { Write-Warning "seed $s stopped before end of content, trying another seed"; continue }
         throw "generation failed (exit $code), see $log"
@@ -74,7 +90,8 @@ if ($Mode -eq 'anchor') {
     $anchor = Join-Path $Root ("cache\anchors\anchor_{0}_seed{1}.wav" -f $VoiceId, $Seed)
     if (-not (Test-Path $anchor)) {
         Write-Host "building voice anchor for '$VoiceId' (one time)"
-        Invoke-Ladder $AnchorText $voicePath $refText $anchor (Join-Path $Root "logs\anchor-$VoiceId-$stamp")
+        # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 3-8 s.
+        Invoke-Ladder $AnchorText $voicePath $refText $anchor (Join-Path $Root "logs\anchor-$VoiceId-$stamp") 1024 15
     }
     $ref = $anchor
     $refTextUsed = $AnchorText
