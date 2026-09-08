@@ -206,159 +206,55 @@ fi
 
 OUT="$ROOT/outputs/higgs-$STAMP.wav"
 
-# Check for sentence-aware chunking
-if [[ "$CHUNKING" == "smart" ]]; then
-  # Use sentence-aware chunker (if available)
-  CHUNKER="$ROOT/scripts/chunk_text.py"
-  if command -v python3 >/dev/null 2>&1 && [[ -f "$CHUNKER" ]]; then
-    echo "Chunking text with sentence-aware splitter (chunk size: $CHUNK, gap: ${GAP_MS}ms)"
-    TMPDIR="/tmp/higgs-chunks-$$"
-    mkdir -p "$TMPDIR"
-    trap 'rm -rf "$TMPDIR"' EXIT
+lufs_of() {
+  # Integrated loudness (LUFS) of a wav via ffmpeg ebur128; prints e.g. -28.1
+  ffmpeg -nostats -i "$1" -af ebur128 -f null - 2>&1 | awk '/ I:/{v=$0} END{sub(/.* I:[ ]*/,"",v); sub(/ LUFS.*/,"",v); print v}'
+}
 
-    # Write text to temp file for chunker
-    TEXT_FILE="$TMPDIR/input.txt"
-    echo -n "$TEXT" > "$TEXT_FILE"
-
-    # Get chunks (zsh-compatible)
-    CHUNKS=()
-    while IFS= read -r chunk; do
-      CHUNKS+=("$chunk")
-    done < <(python3 "$CHUNKER" "$TEXT_FILE" "$CHUNK")
-
-    if [[ ${#CHUNKS[@]} -eq 0 ]]; then
-      echo "No chunks generated" >&2
-      exit 1
-    fi
-
-    echo "Generated ${#CHUNKS[@]} chunks, measuring loudness and generating audio..."
-
-    # Generate each chunk and collect results
-    CHUNK_FILES=()
-    declare -a CHUNK_INFO
-
-    for idx in "${!CHUNKS[@]}"; do
-      CHUNK_TEXT="${CHUNKS[$idx]}"
-      CHUNK_WAV="$TMPDIR/chunk_$idx.wav"
-      CHUNK_LEVELED="$TMPDIR/chunk_${idx}_leveled.wav"
-      LOG="$ROOT/logs/generate-$STAMP-chunk$idx"
-
-      # Generate chunk
-      if ! generate_with_ladder "$CHUNK_TEXT" "$REF_FILE" "$REF_TEXT_USED" "$CHUNK_WAV" "$LOG"; then
-        echo "Failed to generate chunk $idx" >&2
-        rm -rf "$TMPDIR"
-        exit 1
-      fi
-
-      # Measure loudness (macOS-compatible: sed instead of grep -oP)
-      LUFS=$(ffmpeg -i "$CHUNK_WAV" -af ebur128=r=true -f null - 2>&1 | grep 'I:' | sed -n 's/.*I:[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1 || echo "-999")
-      CHUNK_INFO[$idx]="$idx|$((${#CHUNK_TEXT}))|$(wav_seconds "$CHUNK_WAV")|$LUFS"
-      CHUNK_FILES+=("$CHUNK_WAV")
-
-      echo "  chunk $idx: ${#CHUNK_TEXT} chars, $(wav_seconds "$CHUNK_WAV")s, LUFS=$LUFS"
-    done
-
-    # Compute median LUFS
-    LUFS_VALUES=()
-    for info in "${CHUNK_INFO[@]}"; do
-      LUFS=$(echo "$info" | cut -d'|' -f4)
-      [[ "$LUFS" != "-999" ]] && LUFS_VALUES+=("$LUFS")
-    done
-
-    if [[ ${#LUFS_VALUES[@]} -gt 0 ]]; then
-      # Sort and find median
-      IFS=$'\n' sorted=($(sort -n <<<"${LUFS_VALUES[*]}"))
-      unset IFS
-      MID=$(( (${#sorted[@]} - 1) / 2 ))
-      MEDIAN_LUFS="${sorted[$MID]}"
-      echo "Median loudness: $MEDIAN_LUFS LUFS"
-
-      # Apply gain to each chunk
-      echo "Applying level matching (target: $MEDIAN_LUFS LUFS)..."
-      for idx in "${!CHUNK_FILES[@]}"; do
-        CHUNK_WAV="${CHUNK_FILES[$idx]}"
-        CHUNK_LEVELED="$TMPDIR/chunk_${idx}_leveled.wav"
-
-        LUFS=$(ffmpeg -i "$CHUNK_WAV" -af ebur128=r=true -f null - 2>&1 | grep -oP 'I:\s*\K[^ ]+' | head -1)
-        GAIN_DB=$(echo "$MEDIAN_LUFS - $LUFS" | bc -l)
-
-        # Clamp gain to +-6 dB
-        if (( $(echo "$GAIN_DB > 6" | bc -l) )); then
-          GAIN_DB=6
-        elif (( $(echo "$GAIN_DB < -6" | bc -l) )); then
-          GAIN_DB=-6
-        fi
-
-        # Apply gain with limiter
-        ffmpeg -y -hide_banner -loglevel error -i "$CHUNK_WAV" \
-          -af "volume=${GAIN_DB}dB:precision=double,alimiter=level_in=1:level_out=1:attack=5:release=50:look_ahead=20" \
-          -c:a pcm_s16le "$CHUNK_LEVELED"
-
-        CHUNK_FILES[$idx]="$CHUNK_LEVELED"
-        LUFS_AFTER=$(ffmpeg -i "$CHUNK_LEVELED" -af ebur128=r=true -f null - 2>&1 | grep -oP 'I:\s*\K[^ ]+' | head -1)
-        echo "  chunk $idx: ${GAIN_DB}dB gain -> $LUFS_AFTER LUFS"
-      done
-    else
-      echo "Warning: could not measure loudness, skipping level matching"
-      for idx in "${!CHUNK_FILES[@]}"; do
-        cp "${CHUNK_FILES[$idx]}" "$TMPDIR/chunk_${idx}_leveled.wav"
-        CHUNK_FILES[$idx]="$TMPDIR/chunk_${idx}_leveled.wav"
-      done
-    fi
-
-    # Join chunks with silence gaps and crossfades
-    echo "Joining chunks with ${GAP_MS}ms gaps..."
-    CONCAT_FILTER="concat=n=${#CHUNK_FILES[@]}:v=0:a=1"
-    AUDIO_INPUTS=""
-    for f in "${CHUNK_FILES[@]}"; do
-      AUDIO_INPUTS="$AUDIO_INPUTS -i $f"
-    done
-
-    # Create silence gap (24kHz, 16-bit, mono = 48000 bytes/sec)
-    GAP_SAMPLES=$((24000 * GAP_MS / 1000))
-    ffmpeg -y -hide_banner -loglevel error \
-      -f lavfi -i "anullsrc=r=24000:cl=mono" -t "${GAP_MS}"ms -q:a 9 -acodec libmp3lame "$TMPDIR/gap.wav" 2>/dev/null || true
-
-    # Build concat demuxer file with 5ms fades and gaps
-    CONCAT_FILE="$TMPDIR/concat.txt"
-    > "$CONCAT_FILE"
-    for f in "${CHUNK_FILES[@]}"; do
-      echo "file '$f'" >> "$CONCAT_FILE"
-      echo "file '$TMPDIR/gap.wav'" >> "$CONCAT_FILE"
-    done
-
-    # Join with concat demuxer (specify output format explicitly)
-    ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i "$CONCAT_FILE" \
-      -af "afade=t=in:st=0:d=0.005,afade=t=out:st=-0.005" \
-      -f wav -c:a pcm_s16le "$OUT.tmp"
-
-    # Add 150ms tail pad and resample to 24kHz mono 16-bit
-    ffmpeg -y -hide_banner -loglevel error -i "$OUT.tmp" \
-      -af "apad=pad_dur=0.15" -ac 1 -ar 24000 -c:a pcm_s16le "$OUT"
-
-    rm -f "$OUT.tmp"
-    rm -rf "$TMPDIR"
-    trap - EXIT
-
-    echo "$OUT"
-  else
-    # Fallback to single-call mode
-    echo "Python3 or chunker not found, falling back to single-call CLI mode"
-    RAW="$ROOT/outputs/higgs-$STAMP.raw.wav"
-    generate_with_ladder "$TEXT" "$REF_FILE" "$REF_TEXT_USED" "$RAW" "$ROOT/logs/generate-$STAMP"
-    ffmpeg -y -hide_banner -loglevel error -i "$RAW" -ac 1 -ar 24000 -c:a pcm_s16le "$OUT"
-    rm -f "$RAW"
-    echo "$OUT"
-  fi
+if [[ "$CHUNKING" == "smart" ]] && command -v python3 >/dev/null 2>&1 && [[ -f "$ROOT/scripts/chunk_text.py" ]]; then
+  echo "sentence-aware chunking (max $CHUNK chars per chunk, ${GAP_MS} ms gap)"
+  WORK="$(mktemp -d "${TMPDIR:-/tmp}/higgs-chunks.XXXXXX")"
+  trap 'rm -rf "$WORK"' EXIT
+  print -rn -- "$TEXT" > "$WORK/input.txt"
+  typeset -a CHUNKS WAVS LUFS_LIST
+  CHUNKS=("${(@f)$(python3 "$ROOT/scripts/chunk_text.py" "$WORK/input.txt" "$CHUNK")}")
+  i=0
+  for c in "${CHUNKS[@]}"; do
+    [[ -z "${c//[[:space:]]/}" ]] && continue
+    i=$((i + 1))
+    w="$WORK/chunk$i.wav"
+    generate_with_ladder "$c" "$REF_FILE" "$REF_TEXT_USED" "$w" "$ROOT/logs/generate-$STAMP-chunk$i" || { echo "chunk $i failed" >&2; exit 1; }
+    l="$(lufs_of "$w")"
+    WAVS+=("$w"); LUFS_LIST+=("$l")
+    echo "  chunk $i: ${#c} chars, $(wav_seconds "$w") s, ${l} LUFS: ${c[1,40]}..."
+  done
+  [[ ${#WAVS[@]} -eq 0 ]] && { echo "no chunks generated" >&2; exit 1; }
+  MEDIAN="$(python3 -c 'import sys,statistics; print(round(statistics.median([float(x) for x in sys.argv[1:]]),1))' "${LUFS_LIST[@]}")"
+  echo "  level target (median): ${MEDIAN} LUFS"
+  ffmpeg -y -hide_banner -loglevel error -f lavfi -i "anullsrc=r=24000:cl=mono" -t "$(python3 -c "print($GAP_MS/1000)")" -c:a pcm_s16le "$WORK/gap.wav"
+  : > "$WORK/concat.txt"
+  i=0
+  for w in "${WAVS[@]}"; do
+    i=$((i + 1))
+    GAIN="$(python3 -c 'import sys; g=float(sys.argv[1])-float(sys.argv[2]); print(round(max(-6.0,min(6.0,g)),2))' "$MEDIAN" "${LUFS_LIST[$i]}")"
+    lv="$WORK/level$i.wav"
+    # gain to the shared level, brick-wall limiter, 5 ms fade in/out (areverse trick avoids needing the duration)
+    ffmpeg -y -hide_banner -loglevel error -i "$w" \
+      -af "volume=${GAIN}dB,alimiter=limit=0.95:attack=5:release=50,afade=t=in:d=0.005,areverse,afade=t=in:d=0.005,areverse" \
+      -ac 1 -ar 24000 -c:a pcm_s16le "$lv"
+    echo "  chunk $i: gain ${GAIN} dB -> $(lufs_of "$lv") LUFS"
+    print -r -- "file '$lv'" >> "$WORK/concat.txt"
+    [[ $i -lt ${#WAVS[@]} ]] && print -r -- "file '$WORK/gap.wav'" >> "$WORK/concat.txt"
+  done
+  ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i "$WORK/concat.txt" -af "apad=pad_dur=0.15" -ac 1 -ar 24000 -c:a pcm_s16le "$OUT"
+  echo "joined ${#WAVS[@]} chunks -> $OUT"
 else
-  # Original single-call mode (HIGGS_CHUNKING=cli)
-  echo "Using CLI chunking (--text-chunk-size $CHUNK)"
+  [[ "$CHUNKING" == "smart" ]] && echo "python3 or scripts/chunk_text.py not found: using the CLI chunker (--text-chunk-size $CHUNK)"
   RAW="$ROOT/outputs/higgs-$STAMP.raw.wav"
   generate_with_ladder "$TEXT" "$REF_FILE" "$REF_TEXT_USED" "$RAW" "$ROOT/logs/generate-$STAMP"
-  ffmpeg -y -hide_banner -loglevel error -i "$RAW" -ac 1 -ar 24000 -c:a pcm_s16le "$OUT"
+  ffmpeg -y -hide_banner -loglevel error -i "$RAW" -af "apad=pad_dur=0.15" -ac 1 -ar 24000 -c:a pcm_s16le "$OUT"
   rm -f "$RAW"
   echo "$OUT"
 fi
-
 open -R "$OUT" 2>/dev/null || true
 open "$OUT" 2>/dev/null || true

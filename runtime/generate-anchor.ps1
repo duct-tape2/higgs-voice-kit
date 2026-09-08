@@ -1,4 +1,4 @@
-﻿﻿# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
+﻿# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
 # Usage: powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
 param(
     [Parameter(Mandatory = $true)][string]$VoiceId,
@@ -121,90 +121,70 @@ if ($Mode -eq 'anchor') {
 
 $out = Join-Path $Root "outputs\higgs-$stamp.wav"
 
-# Check for sentence-aware chunking
-if ($Chunking -eq 'smart') {
-    $chunker = Join-Path $Root 'scripts\chunk_text.py'
-    if ((Get-Command python3 -ErrorAction SilentlyContinue) -and (Test-Path $chunker)) {
-        Write-Host "Chunking text with sentence-aware splitter (chunk size: $Chunk, gap: ${GapMs}ms)"
-        $tmpDir = [IO.Path]::Combine([IO.Path]::GetTempPath(), "higgs-chunks-$([System.Diagnostics.Process]::GetCurrentProcess().Id)")
-        New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
-
-        # Write text to temp file for chunker
-        $textFile = Join-Path $tmpDir 'input.txt'
-        [IO.File]::WriteAllText($textFile, $text, [Text.Encoding]::UTF8)
-
-        # Get chunks
-        try {
-            $chunks = @(python3 $chunker $textFile $Chunk | Where-Object { $_ })
-        } catch {
-            Write-Warning "Failed to chunk text, falling back to single-call mode: $_"
-            $chunks = $null
-        }
-
-        if ($chunks) {
-            Write-Host "Generated $($chunks.Count) chunks, measuring loudness and generating audio..."
-
-            $chunkFiles = @()
-            $chunkInfo = @()
-
-            for ($idx = 0; $idx -lt $chunks.Count; $idx++) {
-                $chunkText = $chunks[$idx]
-                $chunkWav = Join-Path $tmpDir "chunk_$idx.wav"
-                $logBase = Join-Path $Root "logs\generate-$stamp-chunk$idx"
-
-                # Generate chunk
-                try {
-                    Invoke-Ladder $chunkText $ref $refTextUsed $chunkWav $logBase | Out-Null
-                    $chunkFiles += $chunkWav
-
-                    # Measure loudness (ffprobe if available)
-                    try {
-                        $sec = Get-WavSeconds $chunkWav
-                        Write-Host "  chunk $idx`: $($chunkText.Length) chars, ${sec}s"
-                    } catch {
-                        Write-Host "  chunk $idx`: $($chunkText.Length) chars"
-                    }
-                } catch {
-                    Write-Host "Failed to generate chunk $idx`:" $_.Exception.Message
-                    throw
-                }
-            }
-
-            # For now, simple concatenation with ffmpeg
-            # (Full level-matching logic deferred to future implementation on Windows)
-            Write-Host "Joining $($chunkFiles.Count) chunks..."
-
-            # Use ffmpeg concat demuxer
-            $concatFile = Join-Path $tmpDir 'concat.txt'
-            [IO.File]::WriteAllText($concatFile, @(
-                $chunkFiles | ForEach-Object { "file '$_'" }
-            ) -join "`r`n", [Text.Encoding]::UTF8)
-
-            $args = @(
-                '-y', '-hide_banner', '-loglevel', 'error',
-                '-f', 'concat', '-safe', '0', '-i', $concatFile,
-                '-c:a', 'pcm_s16le',
-                $out
-            )
-            & ffmpeg $args
-
-            Remove-Item -Recurse -Force $tmpDir
-            Write-Host $out
-        } else {
-            # Fallback to single-call mode
-            Write-Host "Python3 or chunker not found, falling back to single-call mode"
-            Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
-            Write-Host $out
-        }
-    } else {
-        # Fallback to single-call mode
-        Write-Host "Python3 or chunker not found, falling back to single-call mode"
-        Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
-        Write-Host $out
+# Sentence-aware chunking: generate each chunk with the same anchor, match levels, join with fixed gaps.
+function Get-Lufs([string]$Path) {
+    # ffmpeg prints its report on stderr; with ErrorActionPreference=Stop a captured stderr line
+    # becomes a terminating NativeCommandError, so relax it while reading the measurement.
+    $prev = $ErrorActionPreference; $ErrorActionPreference = 'Continue'
+    $txt = (& ffmpeg -nostats -i $Path -af ebur128 -f null - 2>&1 | Out-String)
+    $ErrorActionPreference = $prev
+    $m = [regex]::Matches($txt, ' I:\s+(-?[0-9.]+) LUFS')
+    if ($m.Count -gt 0) { return [double]$m[$m.Count - 1].Groups[1].Value }
+    return $null
+}
+$py = $null
+foreach ($cand in 'python', 'python3', 'py') { $cmd = Get-Command $cand -ErrorAction SilentlyContinue; if ($cmd) { $py = $cmd.Source; break } }
+$chunker = Join-Path $Root 'scripts\chunk_text.py'
+$haveFfmpeg = [bool](Get-Command ffmpeg -ErrorAction SilentlyContinue)
+if ($Chunking -eq 'smart' -and $py -and (Test-Path $chunker) -and $haveFfmpeg) {
+    Write-Host "sentence-aware chunking (max $Chunk chars per chunk, ${GapMs} ms gap)"
+    $work = Join-Path ([IO.Path]::GetTempPath()) ("higgs-chunks-" + [Guid]::NewGuid().ToString('N'))
+    New-Item -ItemType Directory -Force -Path $work | Out-Null
+    $inputFile = Join-Path $work 'input.txt'
+    [IO.File]::WriteAllText($inputFile, $text, (New-Object Text.UTF8Encoding $false))
+    $chunks = @(& $py $chunker $inputFile $Chunk 2>$null | Where-Object { $_ -and $_.Trim() })
+    if ($chunks.Count -eq 0) { throw 'chunker returned no chunks' }
+    $wavs = @(); $lufs = @()
+    $i = 0
+    foreach ($c in $chunks) {
+        $i++
+        $w = Join-Path $work ("chunk{0}.wav" -f $i)
+        Invoke-Ladder $c $ref $refTextUsed $w (Join-Path $Root ("logs\generate-$stamp-chunk{0}" -f $i))
+        $l = Get-Lufs $w
+        $wavs += $w; $lufs += $l
+        Write-Host ("  chunk {0}: {1} chars, {2} s, {3} LUFS" -f $i, $c.Length, (Get-WavSeconds $w), $l)
     }
+    $valid = @($lufs | Where-Object { $_ -ne $null } | Sort-Object)
+    $median = if ($valid.Count -gt 0) { $valid[[int][math]::Floor(($valid.Count - 1) / 2)] } else { $null }
+    if ($median -ne $null) { Write-Host ("  level target (median): {0} LUFS" -f $median) }
+    $gap = Join-Path $work 'gap.wav'
+    $inv = [Globalization.CultureInfo]::InvariantCulture
+    $ErrorActionPreference = 'Continue'
+    & ffmpeg -y -hide_banner -loglevel error -f lavfi -i 'anullsrc=r=24000:cl=mono' -t ($GapMs / 1000.0).ToString($inv) -c:a pcm_s16le $gap
+    $concat = Join-Path $work 'concat.txt'
+    $lines = @()
+    for ($k = 0; $k -lt $wavs.Count; $k++) {
+        $gain = 0.0
+        if ($median -ne $null -and $lufs[$k] -ne $null) { $gain = [math]::Round([math]::Max(-6.0, [math]::Min(6.0, $median - $lufs[$k])), 2) }
+        $lv = Join-Path $work ("level{0}.wav" -f ($k + 1))
+        $af = "volume=" + $gain.ToString($inv) + "dB,alimiter=limit=0.95:attack=5:release=50,afade=t=in:d=0.005,areverse,afade=t=in:d=0.005,areverse"
+        & ffmpeg -y -hide_banner -loglevel error -i $wavs[$k] -af $af -ac 1 -ar 24000 -c:a pcm_s16le $lv
+        Write-Host ("  chunk {0}: gain {1} dB -> {2} LUFS" -f ($k + 1), $gain, (Get-Lufs $lv))
+        $lines += "file '" + ($lv -replace "'", "'\''") + "'"
+        if ($k -lt $wavs.Count - 1) { $lines += "file '" + ($gap -replace "'", "'\''") + "'" }
+    }
+    [IO.File]::WriteAllLines($concat, $lines, (New-Object Text.UTF8Encoding $false))
+    & ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i $concat -af 'apad=pad_dur=0.15' -ac 1 -ar 24000 -c:a pcm_s16le $out
+    $ErrorActionPreference = 'Stop'
+    Remove-Item -Recurse -Force $work -ErrorAction SilentlyContinue
+    Write-Host ("joined {0} chunks -> {1}" -f $wavs.Count, $out)
 } else {
-    # Original single-call mode (Chunking=cli)
-    Write-Host "Using CLI chunking (--text-chunk-size $Chunk)"
+    if ($Chunking -eq 'smart') { Write-Warning 'python/ffmpeg or scripts\chunk_text.py not available: using the CLI chunker' }
     Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
+    if ($haveFfmpeg) {
+        $padded = "$out.pad.wav"
+        & ffmpeg -y -hide_banner -loglevel error -i $out -af 'apad=pad_dur=0.15' -ac 1 -ar 24000 -c:a pcm_s16le $padded
+        if (Test-Path $padded) { Move-Item -Force $padded $out }
+    }
     Write-Host $out
 }
