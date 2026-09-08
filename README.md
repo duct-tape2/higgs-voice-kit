@@ -100,6 +100,8 @@ Output files are saved to `outputs/` and timestamped.
 
 The voice reference audio is the anchor for all synthesis. Quality matters:
 
+Use only audio you have the right to clone and to publish the results of. Do not clone a person's voice without their consent; the Higgs model license forbids it.
+
 - **Length:** 10–20 seconds of a single speaker, clear and isolated
 - **Format:** PCM signed 16-bit, mono, 24 kHz
 - **Loudness:** -20 to -16 LUFS, peak <= -1 dBFS (no clipping)
@@ -107,7 +109,7 @@ The voice reference audio is the anchor for all synthesis. Quality matters:
 - **Rights:** You must have permission to use this audio (personal recording, purchased, or public domain)
 
 Do **not** use:
-- Generated or AI-cloned audio as a reference
+- Low-quality generated or AI-cloned audio as your raw reference clip (anchor mode's own 5-second anchor is different: it is synthesized from your clean raw clip on purpose, so the speaker stays fixed across chunks)
 - Background music, effects, or multiple speakers
 - Compressed formats (use raw WAV)
 - Files with resampling artifacts
