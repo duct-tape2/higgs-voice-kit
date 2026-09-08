@@ -23,7 +23,13 @@ $Ladder = @(0, 1000, 7777)
 if (-not (Test-Path $Cli)) { throw "audiocpp_cli.exe not found at $Cli" }
 if (-not (Test-Path $Model)) { throw "model not found at $Model (run scripts\download-model.sh or download manually)" }
 
-$voices = (Get-Content (Join-Path $Root 'config\voices.json') -Raw -Encoding UTF8 | ConvertFrom-Json).voices
+try {
+    $data = Get-Content (Join-Path $Root 'config\voices.json') -Raw -Encoding UTF8 | ConvertFrom-Json -ErrorAction Stop
+    $voices = $data.voices
+} catch {
+    throw "Failed to parse config\voices.json: $($_.Exception.Message)"
+}
+if (-not $voices) { throw "No voices defined in config\voices.json" }
 $voice = $voices | Where-Object { $_.id -eq $VoiceId } | Select-Object -First 1
 if (-not $voice) { throw "voice '$VoiceId' not found in config\voices.json" }
 $voicePath = $voice.path
@@ -36,7 +42,7 @@ $anchorFile = Join-Path $Root ("config\anchor.{0}.txt" -f $anchorLang)
 if (-not (Test-Path $anchorFile)) { throw "anchor sentence file not found: $anchorFile (copy config\anchor.en.txt and translate it)" }
 $AnchorText = [IO.File]::ReadAllText($anchorFile, [Text.Encoding]::UTF8).Trim()
 
-$text = ([IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8) -replace '(?m)^\s*#.*$', '' -replace '\s+', ' ' -replace '"', '').Trim()
+$text = ([IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8) -replace '(?m)^\s*#.*$', '' -replace '\s+', ' ').Trim()
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 foreach ($d in 'outputs', 'logs', 'cache\anchors') { New-Item -ItemType Directory -Force -Path (Join-Path $Root $d) | Out-Null }
 
@@ -44,19 +50,25 @@ function Invoke-Tts([string]$Text, [string]$Ref, [string]$RefText, [int]$UseSeed
     $inv = [Globalization.CultureInfo]::InvariantCulture
     $parts = @(
         '--backend', $Backend, '--threads', $Threads,
-        '--task', 'tts', '--family', 'higgs_audio_tts', '--model', ('"' + $Model + '"'),
-        '--text', ('"' + $Text + '"'), '--voice-ref', ('"' + $Ref + '"'), '--reference-text', ('"' + $RefText + '"'),
+        '--task', 'tts', '--family', 'higgs_audio_tts', '--model', $Model,
+        '--text', $Text, '--voice-ref', $Ref, '--reference-text', $RefText,
         '--seed', $UseSeed, '--temperature', $Temperature.ToString($inv), '--top-k', $TopK, '--top-p', $TopP.ToString($inv),
-        '--max-tokens', $UseMaxTokens, '--text-chunk-size', $Chunk, '--out', ('"' + $Out + '"')
+        '--max-tokens', $UseMaxTokens, '--text-chunk-size', $Chunk, '--out', $Out
     )
     if ($language) { $parts += @('--language', $language) }
-    $p = Start-Process -FilePath $Cli -ArgumentList ($parts -join ' ') -NoNewWindow -Wait -PassThru `
+    $p = Start-Process -FilePath $Cli -ArgumentList $parts -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $Log -RedirectStandardError "$Log.err"
     return $p.ExitCode
 }
 
 function Get-WavSeconds([string]$Path) {
-    # 24 kHz mono 16-bit PCM: 48000 bytes per second (44-byte header ignored).
+    # Use ffprobe for accurate duration detection (format-agnostic).
+    # Falls back to file size if ffprobe is not available.
+    if (Get-Command ffprobe -ErrorAction SilentlyContinue) {
+        $out = ffprobe -v error -show_entries format=duration -of csv=p=0 $Path 2>$null
+        if ($out) { return [math]::Round([double]$out, 1) }
+    }
+    # Fallback: assume 24 kHz mono 16-bit PCM (48000 bytes per second, 44-byte header).
     return [math]::Round(((Get-Item $Path).Length - 44) / 48000.0, 1)
 }
 
