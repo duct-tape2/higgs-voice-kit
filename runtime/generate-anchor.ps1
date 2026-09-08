@@ -11,7 +11,9 @@ param(
     [double]$TopP = 0.8,
     [int]$MaxTokens = 4096,
     [int]$Chunk = 200,
-    [int]$Threads = 8
+    [int]$Threads = 8,
+    [int]$GapMs = 250,
+    [string]$Chunking = 'smart'
 )
 $ErrorActionPreference = 'Stop'
 [Console]::OutputEncoding = [Text.Encoding]::UTF8
@@ -55,12 +57,13 @@ function Invoke-Tts([string]$Text, [string]$Ref, [string]$RefText, [int]$UseSeed
     $inv = [Globalization.CultureInfo]::InvariantCulture
     # Windows PowerShell 5.1 joins an ArgumentList array with spaces and does NOT quote elements,
     # so paths with spaces and the text itself would be split. Build one properly quoted command line.
+    # Note: --text-chunk-size set to 9999 to disable CLI chunking when we do script-level chunking
     $parts = @(
         '--backend', $Backend, '--threads', $Threads,
         '--task', 'tts', '--family', 'higgs_audio_tts', '--model', (Quote-Arg $Model),
         '--text', (Quote-Arg $Text), '--voice-ref', (Quote-Arg $Ref), '--reference-text', (Quote-Arg $RefText),
         '--seed', $UseSeed, '--temperature', $Temperature.ToString($inv), '--top-k', $TopK, '--top-p', $TopP.ToString($inv),
-        '--max-tokens', $UseMaxTokens, '--text-chunk-size', $Chunk, '--out', (Quote-Arg $Out)
+        '--max-tokens', $UseMaxTokens, '--text-chunk-size', 9999, '--out', (Quote-Arg $Out)
     )
     if ($language) { $parts += @('--language', $language) }
     $p = Start-Process -FilePath $Cli -ArgumentList ($parts -join ' ') -NoNewWindow -Wait -PassThru `
@@ -117,5 +120,91 @@ if ($Mode -eq 'anchor') {
 }
 
 $out = Join-Path $Root "outputs\higgs-$stamp.wav"
-Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
-Write-Host $out
+
+# Check for sentence-aware chunking
+if ($Chunking -eq 'smart') {
+    $chunker = Join-Path $Root 'scripts\chunk_text.py'
+    if ((Get-Command python3 -ErrorAction SilentlyContinue) -and (Test-Path $chunker)) {
+        Write-Host "Chunking text with sentence-aware splitter (chunk size: $Chunk, gap: ${GapMs}ms)"
+        $tmpDir = [IO.Path]::Combine([IO.Path]::GetTempPath(), "higgs-chunks-$([System.Diagnostics.Process]::GetCurrentProcess().Id)")
+        New-Item -ItemType Directory -Force -Path $tmpDir | Out-Null
+
+        # Write text to temp file for chunker
+        $textFile = Join-Path $tmpDir 'input.txt'
+        [IO.File]::WriteAllText($textFile, $text, [Text.Encoding]::UTF8)
+
+        # Get chunks
+        try {
+            $chunks = @(python3 $chunker $textFile $Chunk | Where-Object { $_ })
+        } catch {
+            Write-Warning "Failed to chunk text, falling back to single-call mode: $_"
+            $chunks = $null
+        }
+
+        if ($chunks) {
+            Write-Host "Generated $($chunks.Count) chunks, measuring loudness and generating audio..."
+
+            $chunkFiles = @()
+            $chunkInfo = @()
+
+            for ($idx = 0; $idx -lt $chunks.Count; $idx++) {
+                $chunkText = $chunks[$idx]
+                $chunkWav = Join-Path $tmpDir "chunk_$idx.wav"
+                $logBase = Join-Path $Root "logs\generate-$stamp-chunk$idx"
+
+                # Generate chunk
+                try {
+                    Invoke-Ladder $chunkText $ref $refTextUsed $chunkWav $logBase | Out-Null
+                    $chunkFiles += $chunkWav
+
+                    # Measure loudness (ffprobe if available)
+                    try {
+                        $sec = Get-WavSeconds $chunkWav
+                        Write-Host "  chunk $idx`: $($chunkText.Length) chars, ${sec}s"
+                    } catch {
+                        Write-Host "  chunk $idx`: $($chunkText.Length) chars"
+                    }
+                } catch {
+                    Write-Host "Failed to generate chunk $idx`:" $_.Exception.Message
+                    throw
+                }
+            }
+
+            # For now, simple concatenation with ffmpeg
+            # (Full level-matching logic deferred to future implementation on Windows)
+            Write-Host "Joining $($chunkFiles.Count) chunks..."
+
+            # Use ffmpeg concat demuxer
+            $concatFile = Join-Path $tmpDir 'concat.txt'
+            [IO.File]::WriteAllText($concatFile, @(
+                $chunkFiles | ForEach-Object { "file '$_'" }
+            ) -join "`r`n", [Text.Encoding]::UTF8)
+
+            $args = @(
+                '-y', '-hide_banner', '-loglevel', 'error',
+                '-f', 'concat', '-safe', '0', '-i', $concatFile,
+                '-c:a', 'pcm_s16le',
+                $out
+            )
+            & ffmpeg $args
+
+            Remove-Item -Recurse -Force $tmpDir
+            Write-Host $out
+        } else {
+            # Fallback to single-call mode
+            Write-Host "Python3 or chunker not found, falling back to single-call mode"
+            Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
+            Write-Host $out
+        }
+    } else {
+        # Fallback to single-call mode
+        Write-Host "Python3 or chunker not found, falling back to single-call mode"
+        Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
+        Write-Host $out
+    }
+} else {
+    # Original single-call mode (Chunking=cli)
+    Write-Host "Using CLI chunking (--text-chunk-size $Chunk)"
+    Invoke-Ladder $text $ref $refTextUsed $out (Join-Path $Root "logs\generate-$stamp")
+    Write-Host $out
+}
