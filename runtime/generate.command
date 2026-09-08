@@ -250,8 +250,8 @@ if [[ "$CHUNKING" == "smart" ]]; then
         exit 1
       fi
 
-      # Measure loudness
-      LUFS=$(ffmpeg -i "$CHUNK_WAV" -af ebur128=r=true -f null - 2>&1 | grep -oP 'I:\s*\K[^ ]+' | head -1 || echo "-999")
+      # Measure loudness (macOS-compatible: sed instead of grep -oP)
+      LUFS=$(ffmpeg -i "$CHUNK_WAV" -af ebur128=r=true -f null - 2>&1 | grep 'I:' | sed -n 's/.*I:[[:space:]]*\([^[:space:]]*\).*/\1/p' | head -1 || echo "-999")
       CHUNK_INFO[$idx]="$idx|$((${#CHUNK_TEXT}))|$(wav_seconds "$CHUNK_WAV")|$LUFS"
       CHUNK_FILES+=("$CHUNK_WAV")
 
@@ -327,10 +327,10 @@ if [[ "$CHUNKING" == "smart" ]]; then
       echo "file '$TMPDIR/gap.wav'" >> "$CONCAT_FILE"
     done
 
-    # Join with concat demuxer
+    # Join with concat demuxer (specify output format explicitly)
     ffmpeg -y -hide_banner -loglevel error -f concat -safe 0 -i "$CONCAT_FILE" \
       -af "afade=t=in:st=0:d=0.005,afade=t=out:st=-0.005" \
-      -c:a pcm_s16le "$OUT.tmp"
+      -f wav -c:a pcm_s16le "$OUT.tmp"
 
     # Add 150ms tail pad and resample to 24kHz mono 16-bit
     ffmpeg -y -hide_banner -loglevel error -i "$OUT.tmp" \
