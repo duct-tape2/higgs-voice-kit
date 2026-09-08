@@ -1,4 +1,4 @@
-﻿# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
+﻿﻿# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
 # Usage: powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
 param(
     [Parameter(Mandatory = $true)][string]$VoiceId,

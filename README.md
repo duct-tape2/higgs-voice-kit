@@ -171,18 +171,36 @@ bash runtime/generate.command "my_voice" "$(cat script.txt)"
 `runtime/generate.command` and `runtime/generate-anchor.ps1` default to **anchor mode**, which is exactly what the Windows desktop app this kit came from does internally:
 
 1. One fixed sentence (from `config/anchor.<lang>.txt`; `ko` and `en` are included) is synthesized from your raw reference clip and cached as `cache/anchors/anchor_<voice>_seed<seed>.wav` (about 5 seconds, done once per voice and seed).
-2. Every chunk of your script is generated with that anchor as `--voice-ref`, using temperature 0.66, top-k 24, top-p 0.8, seed 42, max-tokens 4096 and 200-character chunks.
+2. Your script is split into sentences (on `.`, `!`, `?`; Korean forms included) and packed into chunks of at most `HIGGS_CHUNK` characters (default 200; longer sentences are split at the last comma/space). Each chunk is generated with that anchor as `--voice-ref`, using temperature 0.66, top-k 24, top-p 0.8, seed 42 (plus per-chunk seed offset), max-tokens 4096.
+
+**Sentence-aware chunking and level matching** (default mode `HIGGS_CHUNKING=smart`):
+- Text is split by sentence boundaries, not just character count, keeping punctuation intact.
+- Each chunk is generated with a separate CLI call using the same anchor, preventing tone drift caused by mid-sentence breaks.
+- Integrated loudness of each chunk is measured with `ffmpeg -af ebur128`.
+- Chunks are gain-normalized to within +-0.5 LU of the median loudness (gain clamped to +-6 dB, protected by limiter to prevent clipping).
+- Chunks are joined with a fixed digital silence gap (`HIGGS_GAP_MS`, default 250 ms), 5 ms fade-in/out on each edge, and a 150 ms tail pad.
+- Final output is 24 kHz mono 16-bit PCM.
+
+If you need the old single-call behavior (one big inference with CLI-level chunking), set `HIGGS_CHUNKING=cli`.
 
 The anchor keeps the speaker identical across chunks and across seeds. Cloning straight from the raw clip with temperature 1.0 gives a noticeably different voice, so if a clip "sounds wrong" compared with the app, check that anchor mode is on.
 
 If a chunk stops before the end of the text (`max_tokens before EOC`), the scripts retry with seed offsets 1000 and 7777. With the anchor attached the speaker does not drift between those seeds.
 
-Overrides (macOS): `HIGGS_MODE=raw`, `HIGGS_BACKEND=metal`, `HIGGS_SEED`, `HIGGS_TEMPERATURE`, `HIGGS_TOP_K`, `HIGGS_TOP_P`, `HIGGS_MAX_TOKENS`, `HIGGS_CHUNK`, `HIGGS_THREADS`.
+**Overrides (macOS):**
+- `HIGGS_MODE` (anchor | raw)
+- `HIGGS_BACKEND` (cpu | metal | cuda | vulkan | best)
+- `HIGGS_SEED` (int; per-chunk seeds = HIGGS_SEED + ladder offset)
+- `HIGGS_TEMPERATURE`, `HIGGS_TOP_K`, `HIGGS_TOP_P`, `HIGGS_MAX_TOKENS`
+- `HIGGS_CHUNK` (int; max chars per chunk, default 200)
+- `HIGGS_CHUNKING` (smart | cli; smart = sentence-aware, cli = single-call)
+- `HIGGS_GAP_MS` (int; silence gap between chunks, default 250)
+- `HIGGS_THREADS` (int; CPU threads)
 
-Windows (CUDA):
+**Windows (CUDA):**
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
+powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt -Backend cuda -Chunking smart -GapMs 250
 ```
 
 Measured on an RTX 4060 Ti (8 GB): a 31-second Korean narration in 33 seconds. Apple Silicon CPU takes several minutes for the same text.
