@@ -182,7 +182,7 @@ if [[ "$MODE" == "anchor" ]]; then
     echo "building voice anchor for '$VOICE_ID' (one time)"
     ANCHOR_RAW="$ANCHOR.raw.wav"
     # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 2-3 s.
-    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP" 1024 3
+    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP" 1024 12
     if [[ ! -f "$ANCHOR_RAW" ]]; then
       echo "Failed to generate anchor audio file" >&2
       exit 1

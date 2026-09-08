@@ -1,4 +1,4 @@
-# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
+﻿# higgs-voice-kit (Windows): generate narration with the anchor pipeline on CUDA.
 # Usage: powershell -ExecutionPolicy Bypass -File runtime\generate-anchor.ps1 -VoiceId my_voice -TextFile script.txt
 param(
     [Parameter(Mandatory = $true)][string]$VoiceId,
@@ -46,17 +46,24 @@ $text = ([IO.File]::ReadAllText($TextFile, [Text.Encoding]::UTF8) -replace '(?m)
 $stamp = Get-Date -Format 'yyyyMMdd-HHmmss'
 foreach ($d in 'outputs', 'logs', 'cache\anchors') { New-Item -ItemType Directory -Force -Path (Join-Path $Root $d) | Out-Null }
 
+function Quote-Arg([string]$Value) {
+    # Windows command-line quoting: wrap in double quotes, escape embedded double quotes as \".
+    return '"' + ($Value -replace '"', '\"') + '"'
+}
+
 function Invoke-Tts([string]$Text, [string]$Ref, [string]$RefText, [int]$UseSeed, [int]$UseMaxTokens, [string]$Out, [string]$Log) {
     $inv = [Globalization.CultureInfo]::InvariantCulture
+    # Windows PowerShell 5.1 joins an ArgumentList array with spaces and does NOT quote elements,
+    # so paths with spaces and the text itself would be split. Build one properly quoted command line.
     $parts = @(
         '--backend', $Backend, '--threads', $Threads,
-        '--task', 'tts', '--family', 'higgs_audio_tts', '--model', $Model,
-        '--text', $Text, '--voice-ref', $Ref, '--reference-text', $RefText,
+        '--task', 'tts', '--family', 'higgs_audio_tts', '--model', (Quote-Arg $Model),
+        '--text', (Quote-Arg $Text), '--voice-ref', (Quote-Arg $Ref), '--reference-text', (Quote-Arg $RefText),
         '--seed', $UseSeed, '--temperature', $Temperature.ToString($inv), '--top-k', $TopK, '--top-p', $TopP.ToString($inv),
-        '--max-tokens', $UseMaxTokens, '--text-chunk-size', $Chunk, '--out', $Out
+        '--max-tokens', $UseMaxTokens, '--text-chunk-size', $Chunk, '--out', (Quote-Arg $Out)
     )
     if ($language) { $parts += @('--language', $language) }
-    $p = Start-Process -FilePath $Cli -ArgumentList $parts -NoNewWindow -Wait -PassThru `
+    $p = Start-Process -FilePath $Cli -ArgumentList ($parts -join ' ') -NoNewWindow -Wait -PassThru `
         -RedirectStandardOutput $Log -RedirectStandardError "$Log.err"
     return $p.ExitCode
 }
@@ -103,7 +110,7 @@ if ($Mode -eq 'anchor') {
     if (-not (Test-Path $anchor)) {
         Write-Host "building voice anchor for '$VoiceId' (one time)"
         # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 3-8 s.
-        Invoke-Ladder $AnchorText $voicePath $refText $anchor (Join-Path $Root "logs\anchor-$VoiceId-$stamp") 1024 15
+        Invoke-Ladder $AnchorText $voicePath $refText $anchor (Join-Path $Root "logs\anchor-$VoiceId-$stamp") 1024 12
     }
     $ref = $anchor
     $refTextUsed = $AnchorText
