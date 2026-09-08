@@ -34,3 +34,4 @@ __pycache__/
 # Local config (user-specific paths)
 config/server.json
 config/voices.json
+.npm-cache/

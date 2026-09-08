@@ -1,6 +1,6 @@
 # higgs-voice-kit
 
-A minimal toolkit to run [Higgs Audio v3 TTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) locally using [audio.cpp](https://github.com/kigner/audio.cpp-webui) and generate consistent narration from your own reference voice.
+A minimal toolkit to run [Higgs Audio v3 TTS](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) locally using [audio.cpp](https://github.com/0xShug0/audio.cpp) and generate consistent narration from your own reference voice.
 
 ## What is it?
 
@@ -20,13 +20,13 @@ This kit lets you:
 
 ### macOS (Apple Silicon)
 - Xcode Command Line Tools or compatible zsh shell
-- [audio.cpp](https://github.com/kigner/audio.cpp-webui/releases) binary (`audiocpp_server` and `audiocpp_cli`)
+- [audio.cpp](https://github.com/0xShug0/audio.cpp/releases) binary (`audiocpp_server` and `audiocpp_cli`)
 - Model: `bosonai/higgs-audio-v3-tts-4b` GGUF q8_0 from Hugging Face
 - `ffmpeg` (for audio resampling)
 
 ### Windows
 - PowerShell 5+ or Command Prompt
-- [audio.cpp Windows build](https://github.com/kigner/audio.cpp-webui/releases/tag/v0.4.2-windows-prebuilt) (CUDA or CPU binary)
+- [audio.cpp Windows build](https://github.com/0xShug0/audio.cpp/releases) (CUDA or CPU binary)
 - Model: `bosonai/higgs-audio-v3-tts-4b` GGUF q8_0 from Hugging Face
 - `ffmpeg` (for audio resampling)
 - Optional: NVIDIA GPU + drivers for faster synthesis
@@ -177,8 +177,15 @@ For 8 GB VRAM (RTX 4060 Ti), keep `text-chunk-size` around 200 and avoid single 
 ## Licenses
 
 - **higgs-voice-kit** (this toolkit): MIT License, Copyright (c) 2026 duct-tape2
-- **audio.cpp**: Apache License 2.0 — see https://github.com/kigner/audio.cpp-webui/blob/main/LICENSE
-- **Higgs Audio v3 model**: Check the [model card](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) for the latest license terms. You must read and comply with the model's license before use.
+- **audio.cpp** (the runtime you download separately): Apache License 2.0, see https://github.com/0xShug0/audio.cpp/blob/main/LICENSE
+- **Higgs Audio v3 model** (`bosonai/higgs-audio-v3-tts-4b`): released under the *Boson Higgs TTS 3 Research and Non-Commercial License* as read from the [model card](https://huggingface.co/bosonai/higgs-audio-v3-tts-4b) on 2026-09-08. In short:
+  - research and non-commercial use is allowed;
+  - production use, hosted APIs, embedding in a product, or reselling requires a separate commercial license from Boson AI;
+  - a **Creator Use Grant** lets individual creators use the output in monetized videos, podcasts and social posts for free, provided the content credits "Boson AI's Higgs Audio" in the audio or prominently in the accompanying text;
+  - voice cloning without the consent of the person whose voice is used, impersonation, fraud and similar uses are prohibited.
+  Read the model card yourself before you rely on any of this; the terms may change and this summary is not legal advice.
+
+**Reference voices.** Only clone voices you have the right to use: your own recordings, a voice actor who agreed in writing, or a synthetic voice whose provider allows it. This kit does not ship any reference audio for that reason.
 
 ## Not Included
 

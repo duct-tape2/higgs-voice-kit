@@ -21,6 +21,8 @@ if [[ -z "$VOICE_FILE" || -z "$REF_TEXT" ]]; then
   echo "Voice '$VOICE_ID' not found in $CONFIG" >&2
   exit 1
 fi
+# Paths in config/voices.json may be relative to the kit root.
+[[ "$VOICE_FILE" != /* ]] && VOICE_FILE="$ROOT/$VOICE_FILE"
 
 if [[ ! -f "$VOICE_FILE" || ! -f "$MODEL" ]]; then
   osascript -e "display alert \"Higgs Audio v3\" message \"Voice or model file not found.\" as warning" 2>/dev/null || true

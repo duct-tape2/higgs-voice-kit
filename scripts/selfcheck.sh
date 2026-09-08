@@ -39,7 +39,7 @@ MODEL="$ROOT/models/higgs-audio-v3-tts-4b-q8_0.gguf"
 if [[ ! -f "$MODEL" ]]; then
   WARNINGS+=("Model not found: $MODEL (run scripts/download-model.sh)")
 else
-  SIZE=$(du -h "$MODEL" | cut -f1)
+  SIZE=$(du -Lh "$MODEL" | cut -f1)
   echo "✓ Model file found: $SIZE"
 fi
 
