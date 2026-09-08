@@ -143,6 +143,12 @@ def validate_chunks(text, chunks):
 
 
 def main():
+    # Windows defaults to the ANSI code page; force UTF-8 so Korean text survives the pipe.
+    for stream in (sys.stdout, sys.stderr):
+        try:
+            stream.reconfigure(encoding='utf-8')
+        except Exception:
+            pass
     if len(sys.argv) < 2:
         print('Usage: chunk_text.py <text_file_or_string> [chunk_size]', file=sys.stderr)
         sys.exit(1)
