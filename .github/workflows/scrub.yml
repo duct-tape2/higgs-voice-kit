@@ -1,0 +1,22 @@
+name: Scrub check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  scrub:
+    name: Privacy and credential check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - name: Scrub check (no personal data, no secrets)
+        run: node scripts/scrub-check.mjs
+      - name: Shell syntax
+        run: zsh -n runtime/generate.command && bash -n scripts/download-model.sh && bash -n scripts/selfcheck.sh
