@@ -34,9 +34,66 @@ if [[ -z "$VOICE_ID" ]]; then
   exit 1
 fi
 
-VOICE_FILE=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .path" "$CONFIG" 2>/dev/null || true)
-REF_TEXT=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .reference_text" "$CONFIG" 2>/dev/null || true)
-LANGUAGE=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .language // empty" "$CONFIG" 2>/dev/null || true)
+# Parse voices.json: try jq first, fall back to python3
+if command -v jq >/dev/null 2>&1; then
+  VOICE_FILE=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .path" "$CONFIG" 2>/dev/null || true)
+  REF_TEXT=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .reference_text" "$CONFIG" 2>/dev/null || true)
+  LANGUAGE=$(jq -r ".voices[] | select(.id == \"$VOICE_ID\") | .language // empty" "$CONFIG" 2>/dev/null || true)
+else
+  # Fallback to python3 if jq is not available
+  python3 << PYEOF
+import json, sys
+try:
+  with open('$CONFIG') as f:
+    data = json.load(f)
+    for v in data.get('voices', []):
+      if v.get('id') == '$VOICE_ID':
+        print(v.get('path', ''))
+        sys.stdout.flush()
+        break
+except Exception as e:
+  pass
+PYEOF
+  VOICE_FILE=$(python3 << PYEOF 2>/dev/null || true
+import json
+try:
+  with open('$CONFIG') as f:
+    data = json.load(f)
+    for v in data.get('voices', []):
+      if v.get('id') == '$VOICE_ID':
+        print(v.get('path', ''))
+        break
+except:
+  pass
+PYEOF
+)
+  REF_TEXT=$(python3 << PYEOF 2>/dev/null || true
+import json
+try:
+  with open('$CONFIG') as f:
+    data = json.load(f)
+    for v in data.get('voices', []):
+      if v.get('id') == '$VOICE_ID':
+        print(v.get('reference_text', ''))
+        break
+except:
+  pass
+PYEOF
+)
+  LANGUAGE=$(python3 << PYEOF 2>/dev/null || true
+import json
+try:
+  with open('$CONFIG') as f:
+    data = json.load(f)
+    for v in data.get('voices', []):
+      if v.get('id') == '$VOICE_ID':
+        print(v.get('language', ''))
+        break
+except:
+  pass
+PYEOF
+)
+fi
 
 if [[ -z "$VOICE_FILE" || -z "$REF_TEXT" ]]; then
   echo "Voice '$VOICE_ID' not found in $CONFIG" >&2
@@ -85,7 +142,7 @@ run_tts() {
 }
 
 wav_seconds() {
-  ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | cut -d. -f1
+  ffprobe -v error -show_entries format=duration -of csv=p=0 "$1" 2>/dev/null | awk -F. '{printf "%.1f\n", $1 + ($2 ? ("0." substr($2, 1, 1)) : 0)}'
 }
 
 generate_with_ladder() {
@@ -124,10 +181,22 @@ if [[ "$MODE" == "anchor" ]]; then
   if [[ ! -f "$ANCHOR" ]]; then
     echo "building voice anchor for '$VOICE_ID' (one time)"
     ANCHOR_RAW="$ANCHOR.raw.wav"
-    # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 3-8 s.
-    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP" 1024 15
+    # Same cap as the desktop app (1024 tokens) plus a length check: a good anchor is 2-3 s.
+    generate_with_ladder "$ANCHOR_TEXT" "$VOICE_FILE" "$REF_TEXT" "$ANCHOR_RAW" "$ROOT/logs/anchor-$VOICE_ID-$STAMP" 1024 3
+    if [[ ! -f "$ANCHOR_RAW" ]]; then
+      echo "Failed to generate anchor audio file" >&2
+      exit 1
+    fi
     ffmpeg -y -hide_banner -loglevel error -i "$ANCHOR_RAW" -ac 1 -ar 24000 -c:a pcm_s16le "$ANCHOR"
+    if [[ ! -f "$ANCHOR" ]]; then
+      echo "Failed to convert anchor to 24 kHz: ffmpeg failed or ffmpeg not installed" >&2
+      exit 1
+    fi
     rm -f "$ANCHOR_RAW"
+  fi
+  if [[ ! -f "$ANCHOR" ]]; then
+    echo "Anchor file missing: $ANCHOR" >&2
+    exit 1
   fi
   REF_FILE="$ANCHOR"
   REF_TEXT_USED="$ANCHOR_TEXT"
