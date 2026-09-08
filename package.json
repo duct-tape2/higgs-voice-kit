@@ -1,0 +1,21 @@
+{
+  "name": "higgs-voice-kit",
+  "version": "1.0.0",
+  "description": "Local Higgs Audio v3 TTS toolkit with voice cloning",
+  "type": "module",
+  "scripts": {
+    "check": "node scripts/scrub-check.mjs"
+  },
+  "keywords": [
+    "tts",
+    "text-to-speech",
+    "higgs-audio",
+    "voice-cloning",
+    "audio.cpp",
+    "gguf"
+  ],
+  "license": "MIT",
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}

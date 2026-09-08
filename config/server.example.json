@@ -1,0 +1,22 @@
+{
+  "host": "127.0.0.1",
+  "port": 8188,
+  "backend": "cpu",
+  "device": 0,
+  "threads": 12,
+  "lazy_load": true,
+  "busy_timeout_ms": 1800000,
+  "models": [
+    {
+      "id": "higgs-audio-tts",
+      "family": "higgs_audio_tts",
+      "path": "models/higgs-audio-v3-tts-4b-q8_0.gguf",
+      "task": "tts",
+      "mode": "offline",
+      "lazy": true,
+      "session_options": {
+        "higgs_audio_tts.reference_cache_slots": 2
+      }
+    }
+  ]
+}

@@ -1,0 +1,36 @@
+# Models and weights (never commit)
+models/*.gguf
+models/downloads/
+models/*.safetensors
+models/*.bin
+
+# Voice reference clips (user's audio, privacy)
+voices/*.wav
+voices/*.mp3
+voices/*.flac
+
+# Generated outputs
+outputs/*.wav
+outputs/*.mp4
+
+# Cache and logs
+cache/
+logs/
+*.log
+
+# System files
+.DS_Store
+Thumbs.db
+*.pyc
+__pycache__/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Local config (user-specific paths)
+config/server.json
+config/voices.json
