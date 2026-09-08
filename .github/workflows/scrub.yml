@@ -19,4 +19,8 @@ jobs:
       - name: Scrub check (no personal data, no secrets)
         run: node scripts/scrub-check.mjs
       - name: Shell syntax
-        run: zsh -n runtime/generate.command && bash -n scripts/download-model.sh && bash -n scripts/selfcheck.sh
+        run: |
+          sudo apt-get update -qq && sudo apt-get install -y -qq zsh >/dev/null
+          zsh -n runtime/generate.command
+          bash -n scripts/download-model.sh
+          bash -n scripts/selfcheck.sh
